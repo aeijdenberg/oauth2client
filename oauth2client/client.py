@@ -2161,3 +2161,13 @@ def flow_from_clientsecrets(filename, scope, redirect_uri=None,
     else:
         raise UnknownClientSecretsFlowError(
             'This OAuth 2.0 flow is unsupported: {0!r}'.format(client_type))
+
+
+def SignedJwtAssertionCredentials(*args, **kwargs):
+    """
+    Deprecated legacy API. New code should use ServiceAccountCredentials
+    instead.
+    """
+    # Import inside of function to prevent circular module dependency
+    from oauth2client import service_account  # NOQA
+    return service_account.SignedJwtAssertionCredentials(*args, **kwargs)

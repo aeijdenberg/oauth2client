@@ -683,3 +683,73 @@ class _JWTAccessCredentials(ServiceAccountCredentials):
         jwt = crypt.make_signed_jwt(self._signer, payload,
                                     key_id=self._private_key_id)
         return jwt.decode('ascii'), expiry
+
+
+class SignedJwtAssertionCredentials(ServiceAccountCredentials):
+    """
+    Deprecated. New code should use ServiceAccountCredentials.
+
+    (need to keep old name for JSON serialization)
+
+    Old class kept for compatibility with a *lot* of shipped code.
+    """
+    def __init__(self,
+                 service_account_name,
+                 private_key,
+                 scope,
+                 private_key_password='notasecret',
+                 user_agent=None,
+                 token_uri=oauth2client.GOOGLE_TOKEN_URI,
+                 revoke_uri=oauth2client.GOOGLE_REVOKE_URI,
+                 **kwargs):
+
+        if hasattr(private_key, 'read'):
+            private_key = private_key.read()
+
+        # Needed in case of serialization
+        self._legacy_key = private_key
+        self._legacy_password = private_key_password
+
+        super(SignedJwtAssertionCredentials, self).__init__(
+            service_account_name,
+            crypt.Signer.from_string(private_key,
+                                     password=private_key_password),
+            scopes=scope,
+            user_agent=user_agent,
+            token_uri=token_uri,
+            revoke_uri=revoke_uri,
+            **kwargs)
+
+    def to_json(self):
+        t = type(self)
+        return json.dumps({
+            '_class': t.__name__,
+            '_module': t.__module__,
+
+            'service_account_name': self._service_account_email,
+            'private_key': base64.b64encode(self._legacy_key),
+            'scope': self._scopes,
+            'private_key_password': self._legacy_password,
+            'user_agent': self._user_agent,
+            'token_uri': self.user_agent,
+            'kwargs': self._kwargs,
+
+            'invalid': self.invalid,
+            'access_token': self.access_token,
+        })
+
+    @classmethod
+    def from_json(cls, s):
+        data = json.loads(_helpers._from_bytes(s))
+        retval = SignedJwtAssertionCredentials(
+            data['service_account_name'],
+            base64.b64decode(data['private_key']),
+            data['scope'],
+            private_key_password=data['private_key_password'],
+            user_agent=data['user_agent'],
+            token_uri=data['token_uri'],
+            **data['kwargs']
+        )
+        retval.invalid = data['invalid']
+        retval.access_token = data['access_token']
+        return retval

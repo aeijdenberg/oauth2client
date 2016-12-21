@@ -28,6 +28,9 @@ from oauth2client import crypt
 from oauth2client import file as file_module
 from oauth2client import service_account
 from oauth2client import transport
+
+from oauth2client.client import SignedJwtAssertionCredentials
+
 from tests import http_mock
 
 
@@ -352,3 +355,112 @@ class TestHasOpenSSLFlag(unittest.TestCase):
     def test_true(self):
         self.assertEqual(True, client.HAS_OPENSSL)
         self.assertEqual(True, client.HAS_CRYPTO)
+
+
+class LegacySignedJwtAssertionCredentialsTests(unittest.TestCase):
+
+    def setUp(self):
+        self.format = 'p12'
+        crypt.Signer = crypt.OpenSSLSigner
+
+    def test_credentials_good(self):
+        private_key = datafile('privatekey.%s' % self.format)
+        credentials = SignedJwtAssertionCredentials(
+            'some_account@example.com',
+            private_key,
+            scope='read+write',
+            sub='joe@example.org')
+        http = http_mock.HttpMockSequence([
+            ({'status': '200'}, b'{"access_token":"1/3w","expires_in":3600}'),
+            ({'status': '200'}, 'echo_request_headers'),
+        ])
+        http = credentials.authorize(http)
+        resp, content = http.request('http://example.org')
+        self.assertEqual(b'Bearer 1/3w', content[b'Authorization'])
+
+    def test_credentials_to_from_json(self):
+        private_key = datafile('privatekey.%s' % self.format)
+        credentials = SignedJwtAssertionCredentials(
+            'some_account@example.com',
+            private_key,
+            scope='read+write',
+            sub='joe@example.org')
+        json = credentials.to_json()
+        restored = client.Credentials.new_from_json(json)
+        self.assertEqual(credentials._legacy_key, restored._legacy_key)
+        self.assertEqual(credentials._legacy_password,
+                         restored._legacy_password)
+        self.assertEqual(credentials._kwargs, restored._kwargs)
+
+    def _credentials_refresh(self, credentials):
+        http = http_mock.HttpMockSequence([
+            ({'status': '200'}, b'{"access_token":"1/3w","expires_in":3600}'),
+            ({'status': '401'}, b''),
+            ({'status': '200'}, b'{"access_token":"3/3w","expires_in":3600}'),
+            ({'status': '200'}, 'echo_request_headers'),
+        ])
+        http = credentials.authorize(http)
+        _, content = http.request('http://example.org')
+        return content
+
+    def test_credentials_refresh_without_storage(self):
+        private_key = datafile('privatekey.%s' % self.format)
+        credentials = SignedJwtAssertionCredentials(
+            'some_account@example.com',
+            private_key,
+            scope='read+write',
+            sub='joe@example.org')
+
+        content = self._credentials_refresh(credentials)
+
+        self.assertEqual(b'Bearer 3/3w', content[b'Authorization'])
+
+    def test_credentials_refresh_with_storage(self):
+        private_key = datafile('privatekey.%s' % self.format)
+        credentials = SignedJwtAssertionCredentials(
+            'some_account@example.com',
+            private_key,
+            scope='read+write',
+            sub='joe@example.org')
+
+        filehandle, filename = tempfile.mkstemp()
+        os.close(filehandle)
+        store = file_module.Storage(filename)
+        store.put(credentials)
+        credentials.set_store(store)
+
+        content = self._credentials_refresh(credentials)
+
+        self.assertEqual(b'Bearer 3/3w', content[b'Authorization'])
+        os.unlink(filename)
+
+
+class LegacyPEMSignedJwtAssertionCredentialsOpenSSLTests(
+        LegacySignedJwtAssertionCredentialsTests):
+
+    def setUp(self):
+        self.format = 'pem'
+        crypt.Signer = crypt.OpenSSLSigner
+
+
+class LegacyPEMSignedJwtAssertionCredentialsPyCryptoTests(
+        LegacySignedJwtAssertionCredentialsTests):
+
+    def setUp(self):
+        self.format = 'pem'
+        crypt.Signer = crypt.PyCryptoSigner
+
+
+class LegacyPKCSSignedJwtAssertionCredentialsPyCryptoTests(unittest.TestCase):
+
+    def test_for_failure(self):
+        crypt.Signer = crypt.PyCryptoSigner
+        private_key = datafile('privatekey.p12')
+        credentials = SignedJwtAssertionCredentials(
+            'some_account@example.com',
+            private_key,
+            scope='read+write',
+            sub='joe@example.org')
+
+        self.assertRaises(NotImplementedError,
+                          credentials._generate_assertion)
